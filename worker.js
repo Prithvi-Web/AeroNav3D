@@ -8,7 +8,8 @@
 
 const UPSTREAMS = [
   (lat, lon, rad) => `https://api.adsb.lol/v2/point/${lat}/${lon}/${rad}`,
-  (lat, lon, rad) => `https://opendata.adsb.fi/api/v2/lat/${lat}/lon/${lon}/dist/${rad}`
+  (lat, lon, rad) => `https://opendata.adsb.fi/api/v2/lat/${lat}/lon/${lon}/dist/${rad}`,
+  (lat, lon, rad) => `https://api.airplanes.live/v2/point/${lat}/${lon}/${rad}`
 ];
 const FRESH_MS = 8000; // serve cached data this fresh without hitting upstreams
 

@@ -456,11 +456,15 @@ async function pollFlights() {
     if (!flightsFailedOnce && !flightsEverLoaded) {
       flightsFailedOnce = true;
       console.warn("Flight data unavailable:", err.message);
-      showNotice("<strong>Live flights unavailable.</strong><br>Serve the site with <code>python server.py</code>, or check the Worker proxy.");
+      showNotice("<strong>Live flights unavailable.</strong><br>Retrying — the flight data sources may be busy.");
     }
     return;
   }
-  flightsFailedOnce = false;
+  if (flightsFailedOnce) {
+    // Data is flowing now — clear the earlier warning
+    document.getElementById("notice").style.display = "none";
+    flightsFailedOnce = false;
+  }
   flightsEverLoaded = true;
 
   const now = Date.now();
