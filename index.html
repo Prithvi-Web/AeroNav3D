@@ -376,7 +376,22 @@ async function loadGoogleBaseLayer() {
   viewer.imageryLayers.addImageryProvider(provider);
 }
 
-// Fallback imagery shipped inside the Cesium build itself (no extra CDN).
+// Keyless satellite fallback: Esri World Imagery (free with attribution).
+// Used automatically whenever Google imagery is unavailable.
+async function loadEsriLayer() {
+  const url = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+  const test = await fetch(url.replace("{z}/{y}/{x}", "0/0/0"));
+  if (!test.ok) throw new Error("Esri tiles unreachable (" + test.status + ")");
+  const provider = new Cesium.UrlTemplateImageryProvider({
+    url,
+    tilingScheme: new Cesium.WebMercatorTilingScheme(),
+    maximumLevel: 19,
+    credit: new Cesium.Credit("Imagery © Esri, Maxar, Earthstar Geographics")
+  });
+  viewer.imageryLayers.addImageryProvider(provider);
+}
+
+// Last-resort imagery shipped inside the Cesium build itself (no extra CDN).
 async function loadFallbackLayer() {
   const provider = await Cesium.TileMapServiceImageryProvider.fromUrl(
     Cesium.buildModuleUrl("Assets/Textures/NaturalEarthII")
@@ -392,16 +407,20 @@ function showNotice(html) {
 
 (async function initImagery() {
   const keyMissing = !GOOGLE_MAPS_API_KEY || GOOGLE_MAPS_API_KEY === "YOUR_GOOGLE_MAPS_API_KEY";
-  if (keyMissing) {
-    await loadFallbackLayer();
-    showNotice("<strong>Google Maps key not set.</strong><br>Showing fallback imagery. Add your Map Tiles API key to <code>GOOGLE_MAPS_API_KEY</code> in index.html to enable Google Maps.");
-  } else {
+  try {
+    if (keyMissing) throw new Error("no Google Maps key configured");
+    await loadGoogleBaseLayer();
+  } catch (err) {
+    // Google unavailable (missing/revoked key, quota, outage) — switch to
+    // keyless Esri satellite imagery. Visitors see no notice; the look is
+    // nearly identical.
+    console.warn("Google imagery unavailable (" + err.message + ") — using Esri World Imagery.");
     try {
-      await loadGoogleBaseLayer();
-    } catch (err) {
-      console.error("Google Maps base layer failed:", err);
+      await loadEsriLayer();
+    } catch (esriErr) {
+      console.error("Esri imagery failed too:", esriErr);
       await loadFallbackLayer();
-      showNotice("<strong>Google Maps unavailable.</strong><br>" + err.message + " — showing fallback imagery. Check that the Map Tiles API is enabled for your key.");
+      showNotice("<strong>Satellite imagery unavailable.</strong><br>Showing basic map imagery — the site still works.");
     }
   }
   addNightLights(); // added after the base layer so it renders on top
