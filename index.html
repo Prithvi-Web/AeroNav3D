@@ -200,6 +200,43 @@
   #loader span{font-size:11px;letter-spacing:.3em;color:var(--muted);text-transform:uppercase;}
   @keyframes spin{to{transform:rotate(360deg)}}
 
+  /* ---------- Premium polish ----------
+     Same dark aesthetic, finer details: neutral hairline borders, soft
+     layered shadows, steady tabular numerals, and gentle micro-motion. */
+  html,body{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;}
+  .brand,.controls button,.hint,.panel,.mf-toggle,.mf-panel,.auth-card{
+    border-color:rgba(255,255,255,.09);
+    box-shadow:0 1px 0 rgba(255,255,255,.05) inset,
+               0 16px 40px -16px rgba(0,0,0,.65);
+    backdrop-filter:blur(18px) saturate(140%);
+    -webkit-backdrop-filter:blur(18px) saturate(140%);
+  }
+  .panel-callsign{letter-spacing:.02em;}
+  .panel-grid{row-gap:14px;}
+  .panel-grid span{font-size:9.5px;letter-spacing:.2em;margin-bottom:3px;opacity:.9;}
+  .panel-grid b{font-variant-numeric:tabular-nums;letter-spacing:.01em;}
+  .panel-head,.panel-photo,.mf-head{border-color:rgba(255,255,255,.07);}
+  .panel-photo img{filter:saturate(1.05);}
+  .panel-photo a{backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+    background:rgba(10,14,22,.55);}
+  .controls button,.mf-toggle{
+    transition:background .2s,border-color .2s,transform .18s cubic-bezier(.2,.7,.3,1.4),
+      box-shadow .2s;
+  }
+  .controls button:hover,.mf-toggle:hover{
+    transform:translateY(-1px);
+    box-shadow:0 1px 0 rgba(255,255,255,.07) inset,
+               0 18px 40px -14px rgba(0,0,0,.7);
+  }
+  .controls button:active{transform:translateY(0) scale(.94);}
+  .panel-head button{transition:color .15s,transform .15s;}
+  .panel-head button:hover{transform:scale(1.12);}
+  .mf-item{transition:background .15s;}
+  .mf-list{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.14) transparent;}
+  .mf-list::-webkit-scrollbar{width:5px;}
+  .mf-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14);border-radius:99px;}
+  :is(button,a):focus-visible{outline:2px solid rgba(120,180,255,.6);outline-offset:2px;}
+
   @media (max-width:600px){
     .brand{top:12px;left:12px;padding:8px 12px 8px 10px;}
     .brand .name{font-size:15px;}
@@ -281,6 +318,9 @@
     <div><span>SPEED</span><b id="fpSpd">—</b></div>
     <div><span>TRACK</span><b id="fpTrk">—</b></div>
     <div><span>V/RATE</span><b id="fpVr">—</b></div>
+    <div><span>MSN</span><b id="fpMsn">—</b></div>
+    <div><span>AGE</span><b id="fpAge">—</b></div>
+    <div style="grid-column:1/-1"><span>COUNTRY OF REGISTRATION</span><b id="fpCountry">—</b></div>
   </div>
 </div>
 
@@ -868,6 +908,43 @@ async function updateAircraftPhoto(rawHex) {
   fpPhotoCredit.href = photo.link;
   fpPhotoWrap.style.display = "block";
 }
+/* Aircraft details: MSN + build year come from local JSON shards under
+   db/ac/ (trimmed from OpenSky's aircraft database, keyed by hex prefix);
+   country of registration comes from the adsbdb.com public API. Both are
+   cached per airframe so the 1 s refresher never re-requests. */
+const metaCache = new Map(); // hex -> { msn, age, country } (nulls for unknown)
+let metaHex = null;
+function setAircraftMetaText(meta) {
+  document.getElementById("fpMsn").textContent = meta?.msn || "—";
+  document.getElementById("fpAge").textContent = meta?.age || "—";
+  document.getElementById("fpCountry").textContent = meta?.country || "—";
+}
+async function updateAircraftMeta(rawHex) {
+  const hex = (rawHex || "").toLowerCase().replace(/[^0-9a-f]/g, "");
+  if (hex === metaHex) return;
+  metaHex = hex;
+  setAircraftMetaText(null);
+  if (hex.length !== 6) return;
+  if (!metaCache.has(hex)) {
+    const meta = { msn: null, age: null, country: null };
+    const [shard, adsbdb] = await Promise.allSettled([
+      fetch(`db/ac/${hex.slice(0, 2)}.json`).then(r => r.ok ? r.json() : null),
+      fetch(`https://api.adsbdb.com/v0/aircraft/${hex}`).then(r => r.json()),
+    ]);
+    const rec = shard.status === "fulfilled" ? shard.value?.[hex.slice(2)] : null;
+    if (rec) {
+      meta.msn = rec[0] || null;
+      const year = parseInt(rec[1], 10);
+      if (year) meta.age = Math.max(0, new Date().getFullYear() - year) + " yrs";
+    }
+    if (adsbdb.status === "fulfilled") {
+      meta.country = adsbdb.value?.response?.aircraft?.registered_owner_country_name || null;
+    }
+    metaCache.set(hex, meta);
+    if (metaHex !== hex) return; // selection changed while loading
+  }
+  setAircraftMetaText(metaCache.get(hex));
+}
 const fpLogo = document.getElementById("fpLogo");
 fpLogo.addEventListener("error", () => { fpLogo.style.display = "none"; });
 let logoPrefix = null;
@@ -897,6 +974,7 @@ function updateFlightPanel(ac) {
   const callsign = (ac.flight || "").trim() || ac.hex.toUpperCase();
   updateAirlineLogo(callsign);
   updateAircraftPhoto(ac.hex);
+  updateAircraftMeta(ac.hex);
   const airline = airlineFor(callsign);
   const rec = flights.get(ac.hex);
   const dtSec = rec ? (Date.now() - rec.fetchedAt) / 1000 : 0;
