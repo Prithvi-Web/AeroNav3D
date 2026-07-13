@@ -95,6 +95,18 @@
   .sr-item .badge{font-size:9px;letter-spacing:.15em;color:#39ff8e;flex:none;}
   .sr-empty{padding:12px 14px;font-size:12px;color:var(--muted);line-height:1.5;}
 
+  /* ---------- Plane hover tooltip ---------- */
+  .plane-tip{
+    position:absolute;z-index:15;display:none;align-items:center;gap:7px;
+    padding:5px 10px;border-radius:9px;white-space:nowrap;pointer-events:none;
+    background:rgba(13,18,30,.92);border:1px solid rgba(255,255,255,.14);
+    font-size:12.5px;font-weight:700;letter-spacing:.05em;
+    transform:translate(-50%,-135%);
+    box-shadow:0 6px 18px rgba(0,0,0,.5);
+  }
+  .plane-tip img{width:18px;height:18px;border-radius:4px;background:#fff;
+    object-fit:contain;padding:1px;display:none;}
+
   /* ---------- Controls ---------- */
   .controls{
     position:absolute;right:20px;bottom:28px;z-index:10;
@@ -374,6 +386,12 @@
     <div class="name">Aero<em>Nav</em>3D</div>
     <div class="tag" id="brandTag">Global Navigation</div>
   </div>
+</div>
+
+<!-- Plane hover tooltip -->
+<div class="plane-tip" id="planeTip">
+  <img id="planeTipLogo" alt="">
+  <span id="planeTipCs"></span>
 </div>
 
 <!-- Search -->
@@ -668,7 +686,7 @@ function makeTrailPrimitive(positions, altsFt) {
     geometryInstances: new Cesium.GeometryInstance({
       geometry: new Cesium.PolylineGeometry({
         positions,
-        width: 5,
+        width: 3,
         colors: altsFt.map(altitudeColor),
         colorsPerVertex: true,
         vertexFormat: Cesium.PolylineColorAppearance.VERTEX_FORMAT
@@ -1235,6 +1253,44 @@ pickHandler.setInputAction((evt) => {
     closeFlightPanel();
   }
 }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+/* Hover tooltip: callsign + airline logo above the plane, FR24-style */
+const planeTip = document.getElementById("planeTip");
+const planeTipLogo = document.getElementById("planeTipLogo");
+const planeTipCs = document.getElementById("planeTipCs");
+planeTipLogo.addEventListener("error", () => { planeTipLogo.style.display = "none"; });
+let tipHex = null;
+pickHandler.setInputAction((evt) => {
+  const picked = scene.pick(evt.endPosition);
+  const id = picked && typeof picked.id === "string" ? picked.id : null;
+  if (id && id.startsWith("plane:")) {
+    const hex = id.slice(6);
+    const f = flights.get(hex);
+    if (f) {
+      if (tipHex !== hex) { // only rebuild content when the plane changes
+        tipHex = hex;
+        const cs = (f.data.flight || "").trim() || hex.toUpperCase();
+        planeTipCs.textContent = cs;
+        const al = airlineFor(cs);
+        if (al) {
+          planeTipLogo.src = `https://www.gstatic.com/flights/airline_logos/70px/${al[0]}.png`;
+          planeTipLogo.style.display = "block";
+        } else {
+          planeTipLogo.style.display = "none";
+          planeTipLogo.removeAttribute("src");
+        }
+      }
+      planeTip.style.left = evt.endPosition.x + "px";
+      planeTip.style.top = evt.endPosition.y + "px";
+      planeTip.style.display = "flex";
+      scene.canvas.style.cursor = "pointer";
+      return;
+    }
+  }
+  tipHex = null;
+  planeTip.style.display = "none";
+  scene.canvas.style.cursor = "";
+}, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
 /* ----- Search (FlightRadar24-style) -----
    Classifies the query as flight number / callsign / registration /
