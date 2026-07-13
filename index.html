@@ -49,20 +49,54 @@
   .brand .name em{font-style:normal;color:var(--accent);}
   .brand .tag{font-size:10px;letter-spacing:.28em;color:var(--muted);margin-top:2px;text-transform:uppercase;}
 
-  /* ---------- Search ---------- */
+  /* ---------- Search + map-style toggle (top centre) ---------- */
+  .top-center{
+    position:absolute;top:26px;left:50%;transform:translateX(-50%);z-index:12;
+    display:flex;align-items:stretch;gap:10px;height:44px;
+  }
   .search{
-    position:absolute;top:20px;left:50%;transform:translateX(-50%);z-index:12;
-    width:min(420px,36vw);display:flex;align-items:center;gap:8px;
-    padding:0 12px;border-radius:12px;
+    width:min(400px,32vw);display:flex;align-items:center;gap:9px;
+    padding:0 14px;border-radius:12px;
     background:var(--panel);border:1px solid var(--border);
     backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+    transition:border-color .2s,box-shadow .2s;
+  }
+  .search:focus-within{
+    border-color:rgba(76,195,255,.45);
+    box-shadow:0 1px 0 rgba(255,255,255,.13) inset,
+               0 -1px 0 rgba(0,0,0,.30) inset,
+               0 0 0 3px rgba(76,195,255,.14),
+               0 10px 26px -8px rgba(0,0,0,.55);
   }
   .search .icon{color:var(--muted);font-size:14px;flex:none;}
   .search input{
     flex:1;min-width:0;background:none;border:none;outline:none;
-    color:var(--text);font-size:13px;padding:12px 0;
+    color:var(--text);font-size:13px;height:100%;
   }
   .search input::placeholder{color:var(--muted);}
+  .map-toggle{
+    position:relative;display:flex;align-items:stretch;width:176px;flex:none;
+    padding:4px;border-radius:12px;
+    background:var(--panel);border:1px solid var(--border);
+    backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+    user-select:none;
+  }
+  .mt-thumb{
+    position:absolute;top:4px;bottom:4px;left:4px;width:calc(50% - 4px);
+    border-radius:9px;
+    background:linear-gradient(180deg,rgba(255,255,255,.16),rgba(255,255,255,.05) 45%,rgba(0,0,0,.10));
+    border:1px solid rgba(255,255,255,.18);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.28),0 2px 8px rgba(0,0,0,.45);
+    transition:transform .32s cubic-bezier(.3,1.25,.4,1);
+    pointer-events:none;
+  }
+  .mt-opt{
+    position:relative;z-index:1;flex:1;border:none;background:none;cursor:pointer;
+    color:var(--muted);font-size:11.5px;font-weight:600;letter-spacing:.07em;
+    transition:color .25s;
+  }
+  .mt-opt.active{color:var(--text);}
+  .mt-opt:hover{color:var(--text);}
   .search-chip{
     display:none;align-items:center;gap:6px;flex:none;cursor:pointer;
     font-size:11px;color:var(--accent);white-space:nowrap;
@@ -278,7 +312,7 @@
      Same dark aesthetic, finer details: neutral hairline borders, soft
      layered shadows, steady tabular numerals, and gentle micro-motion. */
   html,body{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;}
-  .brand,.controls button,.hint,.panel,.mf-toggle,.mf-panel,.auth-card,.search{
+  .brand,.controls button,.hint,.panel,.mf-toggle,.mf-panel,.auth-card,.search,.map-toggle{
     border-color:rgba(255,255,255,.11);
     /* Stronger lit-from-above convex surface */
     background-image:linear-gradient(180deg,
@@ -332,10 +366,17 @@
   .mf-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14);border-radius:99px;}
   :is(button,a):focus-visible{outline:2px solid rgba(120,180,255,.6);outline-offset:2px;}
 
+  /* Below 900px the centred bar would collide with the brand badge and
+     My Flights — drop it to its own row instead. */
+  @media (max-width:900px){
+    .top-center{top:64px;left:12px;right:12px;transform:none;height:40px;}
+    .search{flex:1;width:auto;}
+    .map-toggle{width:150px;}
+    .search-results{top:110px;left:12px;right:12px;transform:none;width:auto;}
+  }
+
   @media (max-width:600px){
     .brand{top:12px;left:12px;padding:8px 12px 8px 10px;}
-    .search{top:64px;left:12px;right:12px;transform:none;width:auto;}
-    .search-results{top:110px;left:12px;right:12px;transform:none;width:auto;}
     .brand .name{font-size:15px;}
     .brand .tag{display:none;}
     .controls{right:12px;bottom:20px;}
@@ -394,12 +435,19 @@
   <span id="planeTipCs"></span>
 </div>
 
-<!-- Search -->
-<div class="search" aria-label="Search flights, airlines and airports">
-  <span class="icon" aria-hidden="true">⌕</span>
-  <input id="searchInput" type="text" autocomplete="off" spellcheck="false"
-         placeholder="Flight, registration, airline, airport, SEA-LAX or 'nearby'">
-  <button class="search-chip" id="searchChip" title="Clear airline filter"></button>
+<!-- Search + map-style toggle -->
+<div class="top-center">
+  <div class="search" aria-label="Search flights, airlines and airports">
+    <span class="icon" aria-hidden="true">⌕</span>
+    <input id="searchInput" type="text" autocomplete="off" spellcheck="false"
+           placeholder="Search flight, airline, airport, SEA-LAX…">
+    <button class="search-chip" id="searchChip" title="Clear airline filter"></button>
+  </div>
+  <div class="map-toggle" id="mapToggle" role="tablist" aria-label="Map style">
+    <div class="mt-thumb" id="mtThumb"></div>
+    <button class="mt-opt" data-mode="hybrid" role="tab">HYBRID</button>
+    <button class="mt-opt" data-mode="satellite" role="tab">SATELLITE</button>
+  </div>
 </div>
 <div class="search-results" id="searchResults"></div>
 
@@ -491,6 +539,8 @@
  * ================================================= */
 const GOOGLE_MAPS_API_KEY = "AIzaSyA-n1jGuFhWQGcBPJNXauBWGnATg8Wg42U";
 const GOOGLE_MAP_TYPE = "satellite"; // "satellite" | "roadmap" | "terrain"
+// "hybrid" draws place names/roads over the imagery; "satellite" is bare.
+let mapMode = localStorage.getItem("mapMode") === "satellite" ? "satellite" : "hybrid";
 
 /* Supabase backend (flight feed, trails, favorites) */
 const SUPABASE_URL = "https://kotesjmkaoebjsoaxizb.supabase.co";
@@ -567,7 +617,13 @@ async function loadGoogleBaseLayer() {
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mapType: GOOGLE_MAP_TYPE, language: "en-US", region: "US" })
+      body: JSON.stringify({
+        mapType: GOOGLE_MAP_TYPE,
+        language: "en-US",
+        region: "US",
+        // Hybrid: draw place names and roads over the satellite imagery
+        ...(mapMode === "hybrid" ? { layerTypes: ["layerRoadmap"] } : {})
+      })
     }
   );
   if (!res.ok) throw new Error("createSession failed (" + res.status + ")");
@@ -597,6 +653,16 @@ async function loadEsriLayer() {
     credit: new Cesium.Credit("Imagery © Esri, Maxar, Earthstar Geographics")
   });
   viewer.imageryLayers.addImageryProvider(provider);
+  // Hybrid labels (place names, boundaries, roads) over the imagery,
+  // matching the Google layer's layerRoadmap overlay.
+  if (mapMode === "hybrid") {
+    viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
+      url: "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
+      tilingScheme: new Cesium.WebMercatorTilingScheme(),
+      maximumLevel: 19,
+      credit: new Cesium.Credit("Labels © Esri")
+    }));
+  }
 }
 
 // Last-resort imagery shipped inside the Cesium build itself (no extra CDN).
@@ -1315,6 +1381,33 @@ pickHandler.setInputAction((evt) => {
   planeTip.style.display = "none";
   scene.canvas.style.cursor = "";
 }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+
+/* ----- Map style toggle: hybrid (labels) vs pure satellite ----- */
+const mapToggle = document.getElementById("mapToggle");
+const mtThumb = document.getElementById("mtThumb");
+function reflectMapToggle() {
+  mapToggle.querySelectorAll(".mt-opt").forEach((b) =>
+    b.classList.toggle("active", b.dataset.mode === mapMode));
+  mtThumb.style.transform = mapMode === "hybrid" ? "translateX(0)" : "translateX(100%)";
+}
+async function setMapMode(mode) {
+  if (mode === mapMode) return;
+  mapMode = mode;
+  localStorage.setItem("mapMode", mode);
+  reflectMapToggle();
+  viewer.imageryLayers.removeAll();
+  try {
+    await loadGoogleBaseLayer();
+  } catch (err) {
+    try { await loadEsriLayer(); } catch (e) { await loadFallbackLayer(); }
+  }
+  addNightLights();
+}
+mapToggle.addEventListener("click", (e) => {
+  const b = e.target.closest(".mt-opt");
+  if (b) setMapMode(b.dataset.mode);
+});
+reflectMapToggle();
 
 /* ----- Search (FlightRadar24-style) -----
    Classifies the query as flight number / callsign / registration /
