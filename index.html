@@ -225,6 +225,22 @@
     background:rgba(10,14,22,.55);border-radius:6px;padding:2px 7px;
     backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
   }
+  /* FR24-style departure → arrival strip under the aircraft photo */
+  .panel-route{display:none;padding:13px 14px;border-bottom:1px solid var(--border);}
+  .route-strip{display:flex;align-items:center;position:relative;}
+  .route-strip::before{content:"";position:absolute;left:50%;top:2px;bottom:2px;
+    width:1px;background:var(--border);}
+  .route-ap{flex:1;min-width:0;text-align:center;}
+  .route-ap b{display:block;font-size:27px;font-weight:700;letter-spacing:.02em;}
+  .route-ap span{display:block;margin-top:3px;font-size:10px;font-weight:600;
+    color:var(--muted);text-transform:uppercase;letter-spacing:.08em;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .route-mid{position:relative;z-index:1;flex:0 0 36px;width:36px;height:36px;
+    border-radius:50%;background:var(--accent);
+    display:flex;align-items:center;justify-content:center;}
+  .route-mid svg{display:block;transform:rotate(90deg);}
+  .route-note{font-size:11px;color:var(--muted);line-height:1.5;text-align:center;}
+  .route-strip+.route-note{margin-top:8px;}
   .panel-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 14px;padding:14px 16px;}
   .panel-grid span{display:block;font-size:10px;letter-spacing:.18em;color:var(--muted);}
   .panel-grid b{font-size:17px;font-weight:600;}
@@ -341,7 +357,7 @@
   .panel-grid{row-gap:14px;}
   .panel-grid span{font-size:9.5px;letter-spacing:.2em;margin-bottom:3px;opacity:.9;}
   .panel-grid b{font-variant-numeric:tabular-nums;letter-spacing:.01em;}
-  .panel-head,.panel-photo,.mf-head{border-color:rgba(255,255,255,.07);}
+  .panel-head,.panel-photo,.panel-route,.mf-head{border-color:rgba(255,255,255,.07);}
   .panel-photo img{filter:saturate(1.05);}
   .panel-photo a{backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
     background:rgba(10,14,22,.55);}
@@ -476,6 +492,7 @@
     <span class="ph-count" id="fpPhotoCount"></span>
     <a id="fpPhotoCredit" target="_blank" rel="noopener"></a>
   </div>
+  <div class="panel-route" id="fpRoute"></div>
   <div class="panel-grid">
     <div><span>ALTITUDE</span><b id="fpAlt">—</b></div>
     <div><span>SPEED</span><b id="fpSpd">—</b></div>
@@ -849,6 +866,139 @@ function extendTrail(ac) {
   );
   trailAlts.push(typeof ac.alt_baro === "number" ? ac.alt_baro : 0);
   rebuildLiveTrail();
+}
+
+/* ----- Departure/arrival route (FR24-style strip under the photo) -----
+ * ADS-B doesn't broadcast flight plans, so the route comes from community
+ * routeset databases keyed by callsign: the same-origin /routes Worker
+ * proxy (cached 30 min) first, then adsb.im directly. Callsigns without
+ * standing data (private/GA, cargo repositioning, military) stay unknown. */
+const fpRoute = document.getElementById("fpRoute");
+const ROUTE_ENDPOINTS = [
+  "/routes",
+  FLIGHT_PROXY_FALLBACK.replace(/\/flights$/, "/routes"),
+  "https://adsb.im/api/0/routeset"
+];
+const routeCache = new Map(); // callsign -> {airports, plausible} | null
+let routeHex = null;          // aircraft whose route is displayed
+let routeMarkers = [];        // departure/destination airport entities
+let destLine = null;          // dashed great circle: aircraft -> destination
+
+function clearRouteDisplay() {
+  routeMarkers.forEach((e) => viewer.entities.remove(e));
+  routeMarkers = [];
+  if (destLine) { viewer.entities.remove(destLine); destLine = null; }
+  fpRoute.style.display = "none";
+  fpRoute.innerHTML = "";
+  routeHex = null;
+}
+
+function routeNote(text) {
+  fpRoute.innerHTML = `<div class="route-note">${text}</div>`;
+  fpRoute.style.display = "block";
+}
+
+async function lookupRoute(callsign, lat, lng) {
+  const body = JSON.stringify({ planes: [{ callsign, lat, lng }] });
+  const tried = new Set();
+  for (const ep of ROUTE_ENDPOINTS) {
+    const abs = new URL(ep, location.href).href; // same-origin /routes can duplicate the Worker URL
+    if (tried.has(abs)) continue;
+    tried.add(abs);
+    try {
+      const res = await fetch(abs, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body
+      });
+      if (!res.ok) continue;
+      const arr = await res.json();
+      if (Array.isArray(arr) && arr[0] && Array.isArray(arr[0]._airports)) {
+        return { airports: arr[0]._airports, plausible: arr[0].plausible !== false };
+      }
+    } catch (e) { /* endpoint down — try the next one */ }
+  }
+  return null;
+}
+
+async function showRoute(hex) {
+  clearRouteDisplay();
+  routeHex = hex;
+  const f = flights.get(hex);
+  if (!f || !f.data) return;
+  const callsign = (f.data.flight || "").trim();
+  if (!callsign) { routeNote("Route unknown — this aircraft broadcasts no callsign"); return; }
+  let route = routeCache.get(callsign);
+  if (route === undefined) {
+    routeNote("Looking up route…");
+    route = await lookupRoute(callsign, f.data.lat, f.data.lon);
+    if (routeHex !== hex) return; // selection changed while loading
+    routeCache.set(callsign, route);
+  }
+  if (!route || route.airports.length < 2) {
+    routeNote("Route unknown — no flight-plan data for this callsign");
+    return;
+  }
+  const dep = route.airports[0];
+  const dest = route.airports[route.airports.length - 1];
+  const city = (ap) => (ap.location || ap.name || "").split(",")[0];
+  fpRoute.innerHTML =
+    '<div class="route-strip">' +
+      `<div class="route-ap"><b>${dep.iata || dep.icao}</b><span>${city(dep)}</span></div>` +
+      '<div class="route-mid" aria-hidden="true">' +
+        '<svg width="17" height="17" viewBox="0 0 24 24" fill="#0b1226">' +
+        '<path d="M21.5 15.5v-2l-8.5-5V3.25a1.25 1.25 0 1 0-2.5 0V8.5l-8.5 5v2l8.5-2.5v5.2l-2.3 1.55v1.5L12 20l3.8 1.25v-1.5L13.5 18.2V13l8 2.5Z"/></svg>' +
+      "</div>" +
+      `<div class="route-ap"><b>${dest.iata || dest.icao}</b><span>${city(dest)}</span></div>` +
+    "</div>" +
+    (route.plausible ? "" : '<div class="route-note">Route on file may not match this flight</div>');
+  fpRoute.style.display = "block";
+  addRouteVisuals(hex, dep, dest);
+}
+
+// Airport markers + a dashed great circle from the live aircraft position
+// to the destination (matches the search feature's route-arc styling).
+function addRouteVisuals(hex, dep, dest) {
+  for (const ap of [dep, dest]) {
+    if (typeof ap.lat !== "number" || typeof ap.lon !== "number") continue;
+    routeMarkers.push(viewer.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(ap.lon, ap.lat),
+      point: {
+        pixelSize: 7,
+        color: Cesium.Color.fromCssColorString("#4cc3ff"),
+        outlineColor: Cesium.Color.WHITE,
+        outlineWidth: 1.5,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY
+      },
+      label: {
+        text: ap.iata || ap.icao,
+        font: "600 11px system-ui",
+        fillColor: Cesium.Color.WHITE,
+        showBackground: true,
+        backgroundColor: new Cesium.Color(0.05, 0.07, 0.12, 0.8),
+        backgroundPadding: new Cesium.Cartesian2(6, 4),
+        pixelOffset: new Cesium.Cartesian2(0, -14),
+        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY
+      }
+    }));
+  }
+  if (typeof dest.lat !== "number" || typeof dest.lon !== "number") return;
+  const destPos = Cesium.Cartesian3.fromDegrees(dest.lon, dest.lat);
+  destLine = viewer.entities.add({
+    polyline: {
+      positions: new Cesium.CallbackProperty(() => {
+        const f = flights.get(hex);
+        if (!f || !f.data) return [];
+        return [flightPosition(f.data, (Date.now() - f.fetchedAt) / 1000), destPos];
+      }, false),
+      width: 2.5,
+      material: new Cesium.PolylineDashMaterialProperty({
+        color: Cesium.Color.fromCssColorString("#4cc3ff").withAlpha(.9),
+        dashLength: 14, dashPattern: 7
+      })
+    }
+  });
 }
 
 // Icons are drawn in white and tinted per class via billboard.color.
@@ -1315,6 +1465,7 @@ function closeFlightPanel() {
   selectedHex = null;
   flightPanel.classList.remove("open");
   clearTrail();
+  clearRouteDisplay();
 }
 document.getElementById("fpClose").addEventListener("click", closeFlightPanel);
 
@@ -1331,6 +1482,7 @@ function selectFlight(hex) {
   if (f) { updateFlightPanel(f.data); flightPanel.classList.add("open"); }
   updateStar();
   if (trailHex !== hex) showTrail(hex);
+  if (routeHex !== hex) showRoute(hex);
 }
 
 const pickHandler = new Cesium.ScreenSpaceEventHandler(scene.canvas);
