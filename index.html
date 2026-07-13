@@ -268,6 +268,17 @@
     letter-spacing:.04em;
   }
   .rp-eta b{color:var(--text);font-weight:650;font-variant-numeric:tabular-nums;}
+  /* Flight mode: coloured status with a softly pulsing glow dot */
+  #fpMode{display:flex;align-items:center;gap:7px;font-size:15px;}
+  .mode-dot{
+    width:7px;height:7px;border-radius:50%;flex:none;
+    background:currentColor;box-shadow:0 0 9px currentColor;
+    animation:modePulse 2.4s ease-in-out infinite;
+  }
+  @keyframes modePulse{
+    0%,100%{opacity:1;box-shadow:0 0 9px currentColor;}
+    50%{opacity:.55;box-shadow:0 0 3px currentColor;}
+  }
   .panel-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 14px;padding:14px 16px;}
   .panel-grid span{display:block;font-size:10px;letter-spacing:.18em;color:var(--muted);}
   .panel-grid b{font-size:17px;font-weight:600;}
@@ -524,7 +535,7 @@
     <div><span>ALTITUDE</span><b id="fpAlt">—</b></div>
     <div><span>SPEED</span><b id="fpSpd">—</b></div>
     <div><span>TRACK</span><b id="fpTrk">—</b></div>
-    <div><span>V/RATE</span><b id="fpVr">—</b></div>
+    <div><span>MODE</span><b id="fpMode">—</b></div>
     <div><span>MSN</span><b id="fpMsn">—</b></div>
     <div><span>AGE</span><b id="fpAge">—</b></div>
     <div style="grid-column:1/-1"><span>COUNTRY OF REGISTRATION</span><b id="fpCountry">—</b></div>
@@ -1605,6 +1616,25 @@ function fmtAlt(ac, dtSec) {
   if (dtSec && typeof ac.baro_rate === "number") alt += ac.baro_rate * (dtSec / 60);
   return (Math.round(alt / 25) * 25).toLocaleString() + " ft";
 }
+/* Flight mode from vertical rate + altitude + ground state:
+ *   |v/r| ≤ 100 ft/min -> Cruising      (holding altitude)
+ *   |v/r| < 400 ft/min -> Level Flight  (drifting slightly)
+ *   v/r ≥ 400 ft/min   -> Climbing, or Taking Off below 3,500 ft
+ *   v/r ≤ -400 ft/min  -> Descending, or Landing below 3,500 ft
+ *   on ground          -> Takeoff Roll when moving fast, else On Ground */
+function flightMode(ac) {
+  const gs = typeof ac.gs === "number" ? ac.gs : 0;
+  if (ac.alt_baro === "ground")
+    return gs > 40 ? ["Takeoff Roll", "#a5ff7a"] : ["On Ground", "#9aa7bd"];
+  const vr = typeof ac.baro_rate === "number" ? ac.baro_rate : null;
+  if (vr === null) return ["—", ""];
+  const low = typeof ac.alt_baro === "number" && ac.alt_baro < 3500;
+  if (vr >= 400) return low ? ["Taking Off", "#a5ff7a"] : ["Climbing", "#39ff8e"];
+  if (vr <= -400) return low ? ["Landing", "#ff8a65"] : ["Descending", "#ffb84d"];
+  if (Math.abs(vr) <= 100) return ["Cruising", "#4cc3ff"];
+  return ["Level Flight", "#8fb7ff"];
+}
+
 function updateFlightPanel(ac) {
   const callsign = (ac.flight || "").trim() || ac.hex.toUpperCase();
   updateAirlineLogo(callsign);
@@ -1620,7 +1650,10 @@ function updateFlightPanel(ac) {
   document.getElementById("fpAlt").textContent = fmtAlt(ac, dtSec);
   document.getElementById("fpSpd").textContent = typeof ac.gs === "number" ? Math.round(ac.gs) + " kt" : "—";
   document.getElementById("fpTrk").textContent = typeof ac.track === "number" ? Math.round(ac.track) + "°" : "—";
-  document.getElementById("fpVr").textContent = typeof ac.baro_rate === "number" ? ac.baro_rate + " ft/min" : "—";
+  const [modeLabel, modeColor] = flightMode(ac);
+  const fpMode = document.getElementById("fpMode");
+  fpMode.innerHTML = modeColor ? `<i class="mode-dot"></i>${modeLabel}` : modeLabel;
+  fpMode.style.color = modeColor;
 }
 function setSelectedColor(hex, selected) {
   const f = flights.get(hex);
