@@ -830,6 +830,18 @@ const FLIGHT_DATA_URL = SUPABASE_URL + "/functions/v1/flights";
 const FLIGHT_PROXY_FALLBACK = "https://aeronav3d.blazedude12.workers.dev/flights";
 const FLIGHT_POLL_MS = 6000;
 const FLIGHT_RADIUS_NM = 250;   // re-api circle query maximum
+/* Zoomed out past the circle query, the feed switches to the global
+ * OpenSky layer (see supabase/functions/flights). The 250 nm circle stops
+ * filling a 60° viewport at about 800 km up; the gap between these two is
+ * hysteresis, so nudging the scroll wheel at the boundary can't flap
+ * between two feeds with different refresh rates. */
+const GLOBAL_ENTER_M = 1_200_000;
+const GLOBAL_EXIT_M = 900_000;
+// Matches the server's 90s global cache: ~13k aircraft is ~400 KB gzipped,
+// so polling any faster just re-downloads an unchanged response. Motion
+// between refreshes is covered by the same dead reckoning the circle feed
+// uses, so the map still moves at 60 fps.
+const GLOBAL_POLL_MS = 90_000;
 const KNOTS_TO_MS = 0.514444;
 const FT_TO_M = 0.3048;
 
@@ -1446,6 +1458,13 @@ function addRouteVisuals(hex, dep, dest) {
 
 // Icons are drawn in white and tinted per class via billboard.color.
 // All glyphs point up (= track 0 / north).
+//
+// Returns a data URL rather than the canvas: Cesium keys its billboard
+// texture atlas by image id, and a bare canvas has no id, so every
+// billboard would allocate its own 48×48 atlas entry. At world zoom that
+// is ~13k entries — far past the max GPU texture size, which silently
+// renders every plane as a black square. A string id dedupes to one entry
+// per icon.
 function drawIcon(draw) {
   const c = document.createElement("canvas");
   c.width = 48; c.height = 48;
@@ -1455,7 +1474,7 @@ function drawIcon(draw) {
   x.strokeStyle = "rgba(8,12,22,.7)";
   x.lineWidth = 2;
   draw(x);
-  return c;
+  return c.toDataURL();
 }
 
 const ICONS = {
@@ -1615,6 +1634,13 @@ let selectedHex = null;
 let flightsFailedOnce = false;
 let flightsEverLoaded = false;
 let flightEndpoint = FLIGHT_DATA_URL;
+/* Local dev points at the deployed backend for the circle query (see
+ * README), which is fine — but a deployment that predates the global feed
+ * answers ?global=1 with an error, leaving the globe nearly empty when
+ * zoomed out. server.py serves the same global response, so prefer it when
+ * we're running from localhost. Empty string = use flightEndpoint. */
+const LOCAL_GLOBAL_URL =
+  ["localhost", "127.0.0.1"].includes(location.hostname) ? "/flights" : "";
 
 function flightAltitudeMeters(ac) {
   return typeof ac.alt_baro === "number" ? Math.max(ac.alt_baro, 0) * FT_TO_M : 0;
@@ -1657,23 +1683,54 @@ function flightPosition(ac, dt, hdgDeg) {
   return Cesium.Cartesian3.fromDegrees(lon, lat, flightAltitudeMeters(ac));
 }
 
-async function pollFlights() {
+let globalMode = false;      // true once zoomed out past the circle query
+let lastGlobalPoll = 0;
+let globalRetryAt = 0;       // global feed failed — use the circle query until then
+
+/* Which feed the current camera height calls for. Only the two thresholds
+ * flip the mode, so hovering at the boundary can't flap between feeds. */
+function useGlobalFeed() {
+  const h = viewer.camera.positionCartographic.height;
+  if (!globalMode && h > GLOBAL_ENTER_M) globalMode = true;
+  else if (globalMode && h < GLOBAL_EXIT_M) globalMode = false;
+  return globalMode && Date.now() >= globalRetryAt;
+}
+
+// `retry` marks an internal re-poll after switching feed or endpoint: it
+// skips the throttle, which the first attempt already paid.
+async function pollFlights(retry) {
   if (document.hidden) return;
   const cam = viewer.camera.positionCartographic;
   const lat = Cesium.Math.toDegrees(cam.latitude).toFixed(3);
   const lon = Cesium.Math.toDegrees(cam.longitude).toFixed(3);
+  const global = useGlobalFeed();
+  if (global && !retry) {
+    if (Date.now() - lastGlobalPoll < GLOBAL_POLL_MS) return;
+    lastGlobalPoll = Date.now();
+  }
   let json;
   try {
-    const res = await fetch(`${flightEndpoint}?circle=${lat},${lon},${FLIGHT_RADIUS_NM}`);
+    const res = await fetch(global
+      ? `${LOCAL_GLOBAL_URL || flightEndpoint}?global=1`
+      : `${flightEndpoint}?circle=${lat},${lon},${FLIGHT_RADIUS_NM}`);
     if (!res.ok) throw new Error("HTTP " + res.status);
     json = await res.json();
     if (json.error) throw new Error(json.error);
   } catch (err) {
+    // Global feed down, or an endpoint that doesn't serve it (the Worker
+    // fallback). A 250 nm circle beats an empty globe; retry global later.
+    // Checked before the endpoint fallback below: a broken global feed says
+    // nothing about the endpoint, and demoting it would cost the trails and
+    // the richer aggregator data for the rest of the session.
+    if (global) {
+      globalRetryAt = Date.now() + 120_000;
+      return pollFlights(true);
+    }
     // No local proxy (e.g. deployed on GitHub Pages)? Switch to the public
     // Worker fallback once and retry; if that fails too, show the notice.
     if (flightEndpoint === FLIGHT_DATA_URL && FLIGHT_PROXY_FALLBACK) {
       flightEndpoint = FLIGHT_PROXY_FALLBACK;
-      return pollFlights();
+      return pollFlights(true);
     }
     // Ignore transient failures (e.g. upstream 429s) once data has flowed
     if (!flightsFailedOnce && !flightsEverLoaded) {
